@@ -6,6 +6,7 @@ import os
 from datetime import datetime
 import websockets
 import json
+import re
 
 # Configure logging
 logging.basicConfig(
@@ -57,8 +58,8 @@ def print_message(chat_title, sender_name, message_text, message_date):
     print(f"💬 Message: {message_text}")
     print("="*50 + "\n")
 
-async def get_last_messages(client, channel, limit=5):
-    """Fetch last messages from a channel"""
+async def get_last_messages(client, channel, limit=300):
+    """Fetch last messages from a channel and check for trading signals"""
     try:
         print(f"\n📡 Fetching last {limit} messages from {channel.title}...")
         print(f"🔍 Channel ID: {channel.id}")
@@ -67,6 +68,13 @@ async def get_last_messages(client, channel, limit=5):
         
         messages = await client.get_messages(channel, limit=limit)
         print(f"✅ Found {len(messages)} messages")
+        
+        # Counters for different types of signals
+        buy_signals_count = 0
+        sell_signals_count = 0
+        total_signals_count = 0
+        
+        print("\n🔍 Starting to scan messages for trading signals...")
         
         for message in messages:
             # Get sender information safely
@@ -79,23 +87,50 @@ async def get_last_messages(client, channel, limit=5):
                 elif hasattr(message.sender, 'username'):
                     sender_name = f"@{message.sender.username}"
             
-            if message.text:  # Only print messages with text content
-                print(f"💬 Message content: {message.text[:100]}...")
+            if message.text:  # Only process messages with text content
+                # Parse trading signal
+                trading_signal = parse_trading_signal(message.text)
+                
+                if trading_signal:
+                    total_signals_count += 1
+                    if trading_signal['type'] == 'buy':
+                        buy_signals_count += 1
+                    else:
+                        sell_signals_count += 1
+                    
+                    print("\n" + "="*50)
+                    print("🎯 FOUND TRADING SIGNAL!")
+                    print(f"📅 Date: {message.date.strftime('%Y-%m-%d %H:%M:%S')}")
+                    print(f"👤 From: {sender_name}")
+                    print(f"📊 Type: {trading_signal['type'].upper()}")
+                    print(f"💰 Instrument: {trading_signal['instrument']}")
+                    print(f"🎯 Entry: {trading_signal['entry']}")
+                    print(f"🛑 SL: {', '.join(map(str, trading_signal['sl']))}")
+                    print(f"🎯 TPs: {', '.join(map(str, trading_signal['tps']))}")
+                    print("="*50 + "\n")
+                    print("Original Message:")
+                    print(message.text)
+                    print("="*50 + "\n")
+                
                 message_data = {
                     "channel": channel.title,
                     "sender": sender_name,
                     "text": message.text,
-                    "timestamp": message.date.isoformat()
+                    "timestamp": message.date.isoformat(),
+                    "is_trading_signal": trading_signal is not None,
+                    "trading_signal": trading_signal
                 }
-                print_message(
-                    chat_title=channel.title,
-                    sender_name=sender_name,
-                    message_text=message.text,
-                    message_date=message.date
-                )
                 await broadcast_message(message_data)
             else:
                 print("⚠️ Message has no text content (might be media only)")
+        
+        print("\n📊 Signal Analysis Summary:")
+        print(f"Total Messages Scanned: {len(messages)}")
+        print(f"Total Trading Signals Found: {total_signals_count}")
+        print(f"BUY Signals: {buy_signals_count}")
+        print(f"SELL Signals: {sell_signals_count}")
+        print("="*50 + "\n")
+        
     except Exception as e:
         print(f"❌ Error getting messages from {channel.title}: {str(e)}")
         print("⚠️ Please check if you have access to this channel")
@@ -121,6 +156,114 @@ async def websocket_handler(websocket, path):
         print("⚠️ Client connection closed unexpectedly")
     finally:
         await unregister(websocket)
+
+def parse_trading_signal(message_text):
+    """Parse trading signals from message text"""
+    # Split message into lines and clean them
+    lines = [line.strip() for line in message_text.split('\n') if line.strip()]
+    
+    # Check if message follows the expected format
+    if len(lines) < 3:  # At least need instrument, entry, and one TP
+        return None
+
+    # Initialize signal data
+    signal = {
+        "type": None,  # buy or sell
+        "instrument": None,
+        "entry": None,
+        "sl": [],  # Changed to array to handle multiple SL values
+        "tps": []
+    }
+
+    # Parse first line for instrument and type
+    first_line = lines[0].lower()
+    if 'gold' in first_line or 'xauusd' in first_line:
+        signal["instrument"] = "XAUUSD" if 'xauusd' in first_line else "Gold"
+    if 'buy' in first_line:
+        signal["type"] = "buy"
+    elif 'sell' in first_line:
+        signal["type"] = "sell"
+
+    # Parse remaining lines
+    for line in lines[1:]:
+        line = line.lower()
+        # Extract entry price
+        if line.startswith('entry'):
+            try:
+                signal["entry"] = float(line.split('entry')[1].strip())
+            except (ValueError, IndexError):
+                pass
+        # Extract stop loss (can have multiple values)
+        elif line.startswith('sl'):
+            try:
+                sl_values = line.split('sl')[1].strip().split()
+                for sl_value in sl_values:
+                    signal["sl"].append(float(sl_value))
+            except (ValueError, IndexError):
+                pass
+        # Extract take profits
+        elif line.startswith('tp'):
+            try:
+                tp_value = float(line.split('tp')[1].strip())
+                signal["tps"].append(tp_value)
+            except (ValueError, IndexError):
+                pass
+
+    # Sort values appropriately
+    if signal["type"] == "buy":
+        signal["sl"].sort()  # Ascending for buy
+        signal["tps"].sort()  # Ascending for buy
+    else:  # sell
+        signal["sl"].sort(reverse=True)  # Descending for sell
+        signal["tps"].sort(reverse=True)  # Descending for sell
+
+    # Only return signal if we have all required components
+    if (signal["type"] and 
+        signal["instrument"] and 
+        signal["entry"] is not None and 
+        signal["sl"] and  # At least one SL value
+        signal["tps"]):
+        return signal
+    return None
+
+async def handle_new_message(event):
+    # Get the chat where the message was sent
+    chat = await event.get_chat()
+    print(f"\n📩 New message from channel: {chat.title}")
+    
+    # Get the sender of the message
+    sender_name = "Channel Admin"
+    if event.message.sender:
+        if hasattr(event.message.sender, 'first_name'):
+            sender_name = f"{event.message.sender.first_name} {event.message.sender.last_name or ''}".strip()
+        elif hasattr(event.message.sender, 'title'):
+            sender_name = event.message.sender.title
+        elif hasattr(event.message.sender, 'username'):
+            sender_name = f"@{event.message.sender.username}"
+    
+    # Parse trading signal if present
+    trading_signal = parse_trading_signal(event.message.text)
+    
+    # Create message data for frontend
+    message_data = {
+        "channel": chat.title,
+        "sender": sender_name,
+        "text": event.message.text,
+        "timestamp": event.message.date.isoformat(),
+        "is_trading_signal": trading_signal is not None,
+        "trading_signal": trading_signal
+    }
+    
+    # Print the message in a formatted way
+    print_message(
+        chat_title=chat.title,
+        sender_name=sender_name,
+        message_text=event.message.text,
+        message_date=event.message.date
+    )
+    
+    # Broadcast to all connected clients
+    await broadcast_message(message_data)
 
 async def main():
     print("\n🚀 Starting Telegram Bot...")
@@ -174,38 +317,7 @@ async def main():
         
         @client.on(events.NewMessage(chats=channels))
         async def handle_new_message(event):
-            # Get the chat where the message was sent
-            chat = await event.get_chat()
-            print(f"\n📩 New message from channel: {chat.title}")
-            
-            # Get the sender of the message
-            sender_name = "Channel Admin"
-            if event.message.sender:
-                if hasattr(event.message.sender, 'first_name'):
-                    sender_name = f"{event.message.sender.first_name} {event.message.sender.last_name or ''}".strip()
-                elif hasattr(event.message.sender, 'title'):
-                    sender_name = event.message.sender.title
-                elif hasattr(event.message.sender, 'username'):
-                    sender_name = f"@{event.message.sender.username}"
-            
-            # Create message data for frontend
-            message_data = {
-                "channel": chat.title,
-                "sender": sender_name,
-                "text": event.message.text,
-                "timestamp": event.message.date.isoformat()
-            }
-            
-            # Print the message in a formatted way
-            print_message(
-                chat_title=chat.title,
-                sender_name=sender_name,
-                message_text=event.message.text,
-                message_date=event.message.date
-            )
-            
-            # Broadcast to all connected clients
-            await broadcast_message(message_data)
+            await handle_new_message(event)
         
         # Keep the script running
         print("\n🎯 Bot is now running and monitoring channels...")

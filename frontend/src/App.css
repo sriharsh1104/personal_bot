@@ -55,4 +55,111 @@ h1 {
   color: #333;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.controls {
+  margin: 20px 0;
+  display: flex;
+  justify-content: center;
+}
+
+.filter-button {
+  padding: 10px 20px;
+  background-color: #f0f0f0;
+  border: 2px solid #ddd;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: all 0.3s ease;
+}
+
+.filter-button:hover {
+  background-color: #e0e0e0;
+}
+
+.filter-button.active {
+  background-color: #4CAF50;
+  color: white;
+  border-color: #45a049;
+}
+
+.trading-signal {
+  border: 2px solid #4CAF50;
+  background-color: #f8fff8;
+}
+
+.signal-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eee;
+}
+
+.signal-type {
+  background-color: #4CAF50;
+  color: white;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-weight: bold;
+}
+
+.signal-instrument {
+  font-weight: bold;
+  color: #333;
+}
+
+.signal-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 15px;
+  margin-bottom: 15px;
+}
+
+.signal-price {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.label {
+  font-weight: bold;
+  color: #666;
+  font-size: 0.9em;
+}
+
+.value {
+  font-size: 1.2em;
+  font-weight: bold;
+  color: #333;
+}
+
+.tp-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tp-value {
+  background-color: #e8f5e9;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-weight: bold;
+}
+
+.original-message {
+  margin-top: 15px;
+  padding-top: 10px;
+  border-top: 1px solid #eee;
+}
+
+.original-message .label {
+  display: block;
+  margin-bottom: 5px;
+}
+
+.original-message p {
+  margin: 0;
+  color: #666;
+  font-size: 0.9em;
 } 

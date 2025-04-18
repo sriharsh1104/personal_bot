@@ -16,6 +16,7 @@ function App() {
       timestamp: new Date().toISOString()
     }
   ])
+  const [showOnlySignals, setShowOnlySignals] = useState(false)
   const ws = useRef(null)
 
   useEffect(() => {
@@ -78,12 +79,27 @@ function App() {
     }
   }, [])
 
+  const filteredMessages = showOnlySignals 
+    ? messages.filter(msg => msg.is_trading_signal)
+    : messages
+
   return (
     <div className="app">
       <h1>Telegram Channel Messages</h1>
+      <div className="controls">
+        <button 
+          onClick={() => setShowOnlySignals(!showOnlySignals)}
+          className={`filter-button ${showOnlySignals ? 'active' : ''}`}
+        >
+          {showOnlySignals ? 'Show All Messages' : 'Show Only Trading Signals'}
+        </button>
+      </div>
       <div className="messages">
-        {messages.map((message, index) => (
-          <div key={index} className="message-card">
+        {filteredMessages.map((message, index) => (
+          <div 
+            key={index} 
+            className={`message-card ${message.is_trading_signal ? 'trading-signal' : ''}`}
+          >
             <div className="message-header">
               <h2>{message.channel}</h2>
               <span className="timestamp">
@@ -93,9 +109,40 @@ function App() {
             <div className="message-sender">
               From: {message.sender}
             </div>
-            <div className="message-content">
-              {message.text}
-            </div>
+            {message.is_trading_signal ? (
+              <div className="trading-signal-content">
+                <div className="signal-header">
+                  <span className="signal-type">{message.trading_signal.type.toUpperCase()}</span>
+                  <span className="signal-instrument">{message.trading_signal.instrument}</span>
+                </div>
+                <div className="signal-details">
+                  <div className="signal-price">
+                    <span className="label">Entry:</span>
+                    <span className="value">{message.trading_signal.entry}</span>
+                  </div>
+                  <div className="signal-price">
+                    <span className="label">SL:</span>
+                    <span className="value">{message.trading_signal.sl}</span>
+                  </div>
+                  <div className="signal-price">
+                    <span className="label">TPs:</span>
+                    <div className="tp-values">
+                      {message.trading_signal.tps.map((tp, i) => (
+                        <span key={i} className="tp-value">{tp}</span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="original-message">
+                  <span className="label">Original Message:</span>
+                  <p>{message.text}</p>
+                </div>
+              </div>
+            ) : (
+              <div className="message-content">
+                {message.text}
+              </div>
+            )}
           </div>
         ))}
       </div>
