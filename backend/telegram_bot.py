@@ -7,6 +7,7 @@ from datetime import datetime
 import websockets
 import json
 import re
+from trading_platform import TradingPlatform
 
 # Configure logging
 logging.basicConfig(
@@ -23,11 +24,28 @@ API_ID = int(os.getenv('TELEGRAM_API_ID'))
 API_HASH = os.getenv('TELEGRAM_API_HASH')
 PHONE = os.getenv('TELEGRAM_PHONE')
 
+# Trading Platform credentials
+MT5_LOGIN = os.getenv('MT5_LOGIN')
+MT5_PASSWORD = os.getenv('MT5_PASSWORD')
+MT5_SERVER = os.getenv('MT5_SERVER')
+
 # Channel usernames
 CHANNELS = [
     'goldhunterpaulnow',  # GOLDHUNTER🦁| PAUL FX 🇳🇱
     # 'Traderjamessss'      # TRADER JAMES
 ]
+
+# Initialize trading platform
+trading_platform = TradingPlatform(
+    login=MT5_LOGIN,
+    password=MT5_PASSWORD,
+    server=MT5_SERVER
+)
+
+# Connect to MT5
+if not trading_platform.connect():
+    print("❌ Failed to connect to MT5. Please check your credentials.")
+    exit(1)
 
 # WebSocket connections
 connected_clients = set()
@@ -175,20 +193,40 @@ def parse_trading_signal(message_text):
         "tps": []
     }
 
-    # Parse first line for instrument and type
+    # Parse first line for instrument, type, and possibly entry
     first_line = lines[0].lower()
+    
+    # Check for instrument
     if 'gold' in first_line or 'xauusd' in first_line:
         signal["instrument"] = "XAUUSD" if 'xauusd' in first_line else "Gold"
+    
+    # Check for type and extract entry if present
     if 'buy' in first_line:
         signal["type"] = "buy"
+        # Try to extract entry from first line
+        try:
+            # Look for numbers after 'buy'
+            numbers = re.findall(r'\d+\.?\d*', first_line.split('buy')[1])
+            if numbers:
+                signal["entry"] = float(numbers[0])
+        except (ValueError, IndexError):
+            pass
     elif 'sell' in first_line:
         signal["type"] = "sell"
+        # Try to extract entry from first line
+        try:
+            # Look for numbers after 'sell'
+            numbers = re.findall(r'\d+\.?\d*', first_line.split('sell')[1])
+            if numbers:
+                signal["entry"] = float(numbers[0])
+        except (ValueError, IndexError):
+            pass
 
     # Parse remaining lines
     for line in lines[1:]:
         line = line.lower()
-        # Extract entry price
-        if line.startswith('entry'):
+        # Extract entry price if not found in first line
+        if line.startswith('entry') and signal["entry"] is None:
             try:
                 signal["entry"] = float(line.split('entry')[1].strip())
             except (ValueError, IndexError):
@@ -207,6 +245,21 @@ def parse_trading_signal(message_text):
                 tp_value = float(line.split('tp')[1].strip())
                 signal["tps"].append(tp_value)
             except (ValueError, IndexError):
+                pass
+
+    # If entry is still not found, try to find it in any line
+    if signal["entry"] is None:
+        for line in lines:
+            try:
+                # Look for a number that could be an entry price
+                numbers = re.findall(r'\d+\.?\d*', line)
+                if numbers:
+                    potential_entry = float(numbers[0])
+                    # If this is a reasonable price for XAUUSD/Gold
+                    if 1000 < potential_entry < 10000:
+                        signal["entry"] = potential_entry
+                        break
+            except ValueError:
                 pass
 
     # Sort values appropriately
@@ -254,6 +307,15 @@ async def handle_new_message(event):
         "trading_signal": trading_signal
     }
     
+    # If it's a trading signal, try to place the order
+    if trading_signal:
+        print("\n🎯 Attempting to place order based on signal...")
+        order_placed = trading_platform.place_order(trading_signal)
+        if order_placed:
+            message_data["order_status"] = "success"
+        else:
+            message_data["order_status"] = "failed"
+    
     # Print the message in a formatted way
     print_message(
         chat_title=chat.title,
@@ -295,7 +357,21 @@ async def main():
             try:
                 print(f"\n📡 Connecting to channel: {channel_username}")
                 # Try to get the channel by its username
-                channel = await client.get_entity(channel_username)
+                try:
+                    channel = await client.get_entity(channel_username)
+                except ValueError:
+                    # If that fails, try with the @ symbol
+                    try:
+                        channel = await client.get_entity(f"@{channel_username}")
+                    except ValueError:
+                        # If that fails, try to get the channel by invite link
+                        try:
+                            # First try without @
+                            channel = await client.get_entity(f"https://t.me/{channel_username}")
+                        except ValueError:
+                            # Then try with @
+                            channel = await client.get_entity(f"https://t.me/@{channel_username}")
+                
                 channels.append(channel)
                 print(f"✅ Connected to channel: {channel.title}")
                 print(f"🔍 Channel ID: {channel.id}")
